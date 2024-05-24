@@ -631,7 +631,8 @@ static int i2c_dw_transfer(const struct device *dev,
 	uint8_t msg_left = num_msgs;
 	uint8_t pflags;
 	int ret;
-	uint32_t reg_base = get_regs(dev);
+	uint32_t reg_base = get_regs(dev),
+			 value = 0;
 
 	__ASSERT_NO_MSG(msgs);
 	if (!num_msgs) {
@@ -675,8 +676,14 @@ static int i2c_dw_transfer(const struct device *dev,
 
 		/* Process all the messages */
 	while (msg_left > 0) {
-		pflags = dw->xfr_flags;
 
+		/* Workaround as DW hardware does not support 0 byte transfers.*/
+		if((cur_msg->len == 0) && (cur_msg->buf != NULL))
+		{
+			cur_msg->len=1;
+		}
+		pflags = dw->xfr_flags;
+		
 		dw->xfr_buf = cur_msg->buf;
 		dw->xfr_len = cur_msg->len;
 		dw->xfr_flags = cur_msg->flags;
@@ -714,7 +721,13 @@ static int i2c_dw_transfer(const struct device *dev,
 		}
 
 		/* Wait for transfer to be done */
-		k_sem_take(&dw->device_sync_sem, K_FOREVER);
+		ret = k_sem_take(&dw->device_sync_sem, K_MSEC(CONFIG_I2C_DW_RW_TIMEOUT_MS));
+		if(ret !=0)
+		{
+			write_intr_mask(DW_DISABLE_ALL_I2C_INT, reg_base);
+			value = read_clr_intr(reg_base);
+			break;
+		}
 
 		if (dw->state & I2C_DW_CMD_ERROR) {
 			ret = -EIO;
